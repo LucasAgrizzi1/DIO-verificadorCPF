@@ -1,0 +1,87 @@
+using System.IO;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Azure.WebJobs;
+using Microsoft.Azure.WebJobs.Extensions.Http;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging;
+using Newtonsoft.Json;
+
+public static class CpfValidatorFunction
+{
+    [FunctionName("ValidateCpfMicroservice")]
+    public static async Task<IActionResult> Run(
+        [HttpTrigger(AuthorizationLevel.Function, "get", "post", Route = null)] HttpRequest req,
+        ILogger log)
+    {
+        log.LogInformation("C# HTTP trigger function processou uma requisição.");
+
+        string cpf = req.Query["cpf"];
+        
+        string requestBody = await new StreamReader(req.Body).ReadToEndAsync();
+        dynamic data = JsonConvert.DeserializeObject(requestBody);
+        cpf = cpf ?? data?.cpf;
+
+        if (string.IsNullOrEmpty(cpf))
+        {
+            return new BadRequestObjectResult("Por favor, passe um 'cpf' na string de consulta ou no corpo da requisição.");
+        }
+
+        // --------------------------------------------------------
+        // PRINCIPAL LÓGICA DE VALIDAÇÃO DO CPF
+        // --------------------------------------------------------
+        bool isValid = IsCpfValid(cpf);
+        // --------------------------------------------------------
+
+        string responseMessage = isValid
+            ? $"O CPF {cpf} é válido."
+            : $"O CPF {cpf} é inválido.";
+
+        return new OkObjectResult(new {
+            cpf = cpf,
+            valid = isValid,
+            message = responseMessage
+        });
+    }
+
+    /// <summary>
+    /// Implementa a lógica básica de validação do CPF (algoritmo dos dígitos verificadores).
+    /// </summary>
+    private static bool IsCpfValid(string cpf)
+    {
+        // 1. Limpeza e Formatação
+        cpf = cpf.Trim().Replace(".", "").Replace("-", "");
+        if (cpf.Length != 11) return false;
+
+        // 2. Verifica CPFs com todos os dígitos iguais
+        // Ex: 111.111.111-11, 000.000.000-00
+        if (new string(cpf[0], 11) == cpf) return false;
+
+        // 3. Cálculo do Primeiro Dígito Verificador (DV1)
+        int[] multiplicadores1 = new int[9] { 10, 9, 8, 7, 6, 5, 4, 3, 2 };
+        string tempCpf = cpf.Substring(0, 9);
+        int soma = 0;
+
+        for (int i = 0; i < 9; i++)
+            soma += int.Parse(tempCpf[i].ToString()) * multiplicadores1[i];
+
+        int resto = soma % 11;
+        resto = resto < 2 ? 0 : 11 - resto;
+        string digito1 = resto.ToString();
+
+        // 4. Cálculo do Segundo Dígito Verificador (DV2)
+        int[] multiplicadores2 = new int[10] { 11, 10, 9, 8, 7, 6, 5, 4, 3, 2 };
+        tempCpf = tempCpf + digito1;
+        soma = 0;
+
+        for (int i = 0; i < 10; i++)
+            soma += int.Parse(tempCpf[i].ToString()) * multiplicadores2[i];
+
+        resto = soma % 11;
+        resto = resto < 2 ? 0 : 11 - resto;
+        string digito2 = resto.ToString();
+
+        // 5. Comparação
+        return cpf.EndsWith(digito1 + digito2);
+    }
+}
